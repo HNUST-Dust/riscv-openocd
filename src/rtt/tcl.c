@@ -103,6 +103,21 @@ COMMAND_HANDLER(handle_rtt_polling_interval_command)
 	return ERROR_OK;
 }
 
+COMMAND_HANDLER(handle_rtt_halt_polling_command)
+{
+	if (CMD_ARGC == 0) {
+		command_print(CMD, "%s", rtt_get_halt_polling() ? "on" : "off");
+	} else if (CMD_ARGC == 1) {
+		bool enabled;
+		COMMAND_PARSE_ON_OFF(CMD_ARGV[0], enabled);
+		rtt_set_halt_polling(enabled);
+	} else {
+		return ERROR_COMMAND_SYNTAX_ERROR;
+	}
+
+	return ERROR_OK;
+}
+
 COMMAND_HANDLER(handle_rtt_channels_command)
 {
 	int ret;
@@ -246,6 +261,13 @@ static const struct command_registration rtt_subcommand_handlers[] = {
 		.mode = COMMAND_EXEC,
 		.help = "show or set polling interval in ms",
 		.usage = "[interval]"
+	},
+	{
+		.name = "halt_polling",
+		.handler = handle_rtt_halt_polling_command,
+		.mode = COMMAND_EXEC,
+		.help = "temporarily halt a running target for RTT memory access",
+		.usage = "[on|off]"
 	},
 	{
 		.name = "channels",

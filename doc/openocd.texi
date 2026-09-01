@@ -9819,6 +9819,13 @@ The polling interval determines (in milliseconds) how often the up-channels are
 checked for new data.
 @end deffn
 
+@deffn {Command} {rtt halt_polling} [on|off]
+Display or configure whether RTT temporarily halts a running target before
+accessing its memory. This fallback is disabled by default because halting the
+target makes RTT intrusive. Enable it only when the target cannot provide
+background memory access while running.
+@end deffn
+
 @deffn {Command} {rtt channels}
 Display a list of all channels and their properties.
 @end deffn

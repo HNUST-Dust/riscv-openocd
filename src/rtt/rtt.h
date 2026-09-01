@@ -187,6 +187,17 @@ int rtt_get_polling_interval(unsigned int *interval);
 int rtt_set_polling_interval(unsigned int interval);
 
 /**
+ * Configure whether RTT memory accesses temporarily halt a running target.
+ *
+ * This is required by targets whose debug module cannot access memory while
+ * the core is running.
+ */
+void rtt_set_halt_polling(bool enabled);
+
+/** Return whether RTT memory accesses temporarily halt a running target. */
+bool rtt_get_halt_polling(void);
+
+/**
  * Get whether RTT is configured.
  *
  * @returns Whether RTT is configured.

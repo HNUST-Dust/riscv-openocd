@@ -43,6 +43,7 @@ static struct {
 	size_t sink_list_length;
 
 	unsigned int polling_interval;
+	bool halt_polling;
 } rtt;
 
 int rtt_init(void)
@@ -58,6 +59,7 @@ int rtt_init(void)
 	rtt.started = false;
 
 	rtt.polling_interval = 100;
+	rtt.halt_polling = false;
 
 	return ERROR_OK;
 }
@@ -69,12 +71,65 @@ int rtt_exit(void)
 	return ERROR_OK;
 }
 
-static int read_channel_callback(void *user_data)
+static int rtt_target_access_begin(bool *resume)
 {
 	int ret;
 
+	*resume = false;
+
+	if (!rtt.halt_polling || rtt.target->state != TARGET_RUNNING)
+		return ERROR_OK;
+
+	ret = target_halt(rtt.target);
+	if (ret != ERROR_OK)
+		return ret;
+
+	ret = target_wait_state(rtt.target, TARGET_HALTED, 1000);
+	if (ret != ERROR_OK) {
+		if (rtt.target->state == TARGET_HALTED)
+			target_resume(rtt.target, true, 0, false, false);
+		return ret;
+	}
+
+	*resume = true;
+	return ERROR_OK;
+}
+
+static int rtt_target_access_end(bool resume, int access_ret)
+{
+	if (!resume)
+		return access_ret;
+
+	int resume_ret = target_resume(rtt.target, true, 0, false, false);
+	return access_ret == ERROR_OK ? resume_ret : access_ret;
+}
+
+static int read_channel_callback(void *user_data)
+{
+	int ret;
+	bool resume = false;
+
+	if (rtt.halt_polling) {
+		bool has_sink = false;
+
+		for (size_t i = 0; i < rtt.sink_list_length; i++) {
+			if (rtt.sink_list[i]) {
+				has_sink = true;
+				break;
+			}
+		}
+
+		if (!has_sink)
+			return ERROR_OK;
+	}
+
+	ret = rtt_target_access_begin(&resume);
+	if (ret != ERROR_OK)
+		return ret;
+
 	ret = rtt.source.read(rtt.target, &rtt.ctrl, rtt.sink_list,
 		rtt.sink_list_length, NULL);
+	ret = rtt_target_access_end(resume, ret);
 
 	if (ret != ERROR_OK) {
 		target_unregister_timer_callback(&read_channel_callback, NULL);
@@ -125,9 +180,14 @@ int rtt_start(void)
 {
 	int ret;
 	target_addr_t addr = rtt.addr;
+	bool resume = false;
 
 	if (rtt.started)
 		return ERROR_OK;
+
+	ret = rtt_target_access_begin(&resume);
+	if (ret != ERROR_OK)
+		return ret;
 
 	if (!rtt.found_cb || rtt.changed) {
 		rtt.source.find_cb(rtt.target, &addr, rtt.size, rtt.id,
@@ -141,25 +201,27 @@ int rtt_start(void)
 			rtt.ctrl.address = addr;
 		} else {
 			LOG_ERROR("rtt: No control block found");
-			return ERROR_FAIL;
+			ret = ERROR_FAIL;
+			goto out;
 		}
 	}
 
 	ret = rtt.source.read_cb(rtt.target, rtt.ctrl.address, &rtt.ctrl, NULL);
 
 	if (ret != ERROR_OK)
-		return ret;
+		goto out;
 
 	ret = rtt.source.start(rtt.target, &rtt.ctrl, NULL);
 
 	if (ret != ERROR_OK)
-		return ret;
+		goto out;
 
 	target_register_timer_callback(&read_channel_callback,
 		rtt.polling_interval, 1, NULL);
 	rtt.started = true;
 
-	return ERROR_OK;
+out:
+	return rtt_target_access_end(resume, ret);
 }
 
 int rtt_stop(void)
@@ -285,16 +347,34 @@ int rtt_set_polling_interval(unsigned int interval)
 	return ERROR_OK;
 }
 
+void rtt_set_halt_polling(bool enabled)
+{
+	rtt.halt_polling = enabled;
+}
+
+bool rtt_get_halt_polling(void)
+{
+	return rtt.halt_polling;
+}
+
 int rtt_write_channel(unsigned int channel_index, const uint8_t *buffer,
 		size_t *length)
 {
+	int ret;
+	bool resume = false;
+
 	if (channel_index >= rtt.ctrl.num_up_channels) {
 		LOG_WARNING("rtt: Down-channel %u is not available", channel_index);
 		return ERROR_OK;
 	}
 
-	return rtt.source.write(rtt.target, &rtt.ctrl, channel_index, buffer,
+	ret = rtt_target_access_begin(&resume);
+	if (ret != ERROR_OK)
+		return ret;
+
+	ret = rtt.source.write(rtt.target, &rtt.ctrl, channel_index, buffer,
 		length, NULL);
+	return rtt_target_access_end(resume, ret);
 }
 
 bool rtt_configured(void)
@@ -315,6 +395,14 @@ const struct rtt_control *rtt_get_control(void)
 int rtt_read_channel_info(unsigned int channel_index,
 	enum rtt_channel_type type, struct rtt_channel_info *info)
 {
-	return rtt.source.read_channel_info(rtt.target, &rtt.ctrl,
+	int ret;
+	bool resume = false;
+
+	ret = rtt_target_access_begin(&resume);
+	if (ret != ERROR_OK)
+		return ret;
+
+	ret = rtt.source.read_channel_info(rtt.target, &rtt.ctrl,
 		channel_index, type, info, NULL);
+	return rtt_target_access_end(resume, ret);
 }
